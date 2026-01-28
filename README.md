@@ -13,21 +13,27 @@ A Windows application to automatically mirror print jobs from one or more printe
 ## Requirements
 
 - Windows 10 or Windows 11
+- Python 3.9+ 
 - Administrator privileges (required for spool file access)
-- Python 3.9+ (only for development)
 
 ## Installation
 
-### Option 1: Pre-built GUI (Recommended for Desktop)
+### Option 1: Using uv (Recommended)
 
-Download `EmiliaPrintMirror.exe` from the [Releases](https://github.com/EmiliaVision/emilia-print-mirror/releases) page.
+The easiest way to install and run using [uv](https://docs.astral.sh/uv/):
 
-1. Copy `EmiliaPrintMirror.exe` to your preferred location (e.g., `C:\Program Files\EmiliaPrintMirror\`)
-2. Create a desktop shortcut (optional)
-3. Right-click the shortcut > Properties > Advanced > **Run as administrator**
-4. Double-click to run
+```powershell
+# Install uv
+irm https://astral.sh/uv/install.ps1 | iex
 
-### Option 2: Run from Source
+# Clone and run
+git clone https://github.com/EmiliaVision/emilia-print-mirror.git
+cd emilia-print-mirror
+uv sync
+uv run emilia-mirror
+```
+
+### Option 2: Run from Source (pip)
 
 ```powershell
 # Clone the repository
@@ -43,35 +49,7 @@ pip install -r requirements.txt
 python src/mirror_app.py
 ```
 
-### Option 3: Using uvx (Quick Run)
-
-Run directly without installation using [uv](https://docs.astral.sh/uv/):
-
-```powershell
-# Install uv
-irm https://astral.sh/uv/install.ps1 | iex
-
-# Run GUI directly from GitHub
-uvx --from git+https://github.com/EmiliaVision/emilia-print-mirror emilia-mirror
-
-# Run service/CLI mode
-uvx --from git+https://github.com/EmiliaVision/emilia-print-mirror emilia-mirror-service console
-```
-
-### Option 4: Using uv (Development)
-
-```powershell
-# Install uv
-irm https://astral.sh/uv/install.ps1 | iex
-
-# Clone and run
-git clone https://github.com/EmiliaVision/emilia-print-mirror.git
-cd emilia-print-mirror
-uv sync
-uv run emilia-mirror
-```
-
-### Option 5: Install as Windows Service (with NSSM)
+### Option 3: Install as Windows Service (with NSSM)
 
 For running as a background service, use Python directly with [NSSM](https://nssm.cc/).
 
@@ -134,7 +112,9 @@ nssm stop EmiliaPrintMirror
 nssm remove EmiliaPrintMirror confirm
 ```
 
-### Option 6: Build GUI Executable from Source
+### Option 4: Build GUI Executable from Source
+
+> **Note:** The .exe build currently has issues with win32print. Use Options 1-3 instead.
 
 ```powershell
 # Install dependencies
@@ -149,20 +129,28 @@ pyinstaller build_mirror.spec
 
 ### GUI Application
 
-1. Run `EmiliaPrintMirror.exe` as Administrator
+1. Run the application as Administrator (right-click > Run as administrator)
 2. Select one or more **SOURCE** printers (Ctrl+click for multiple)
 3. Select the **DESTINATION** printer
 4. Click **Start Mirror**
 5. Print to any source printer - it will be automatically copied to the destination
-6. Minimize to system tray (optional)
+6. Check "Auto-start mirror when application opens" to start automatically next time
 
 #### Auto-start GUI on Windows Login
 
-To run the GUI automatically when you log in (as Administrator):
+To run the GUI automatically when you log in (as Administrator), create a `.bat` file and schedule it:
 
 ```powershell
-# Create scheduled task that runs at login with admin privileges
-$Action = New-ScheduledTaskAction -Execute "C:\Program Files\EmiliaPrintMirror\EmiliaPrintMirror.exe"
+# 1. Create a batch file to launch the app
+$repoPath = "C:\Users\$env:USERNAME\emilia-print-mirror"
+@"
+@echo off
+cd /d $repoPath
+call venv\Scripts\python.exe src\mirror_app.py
+"@ | Out-File -FilePath "$repoPath\EmiliaPrintMirror.bat" -Encoding ASCII
+
+# 2. Create scheduled task that runs at login with admin privileges
+$Action = New-ScheduledTaskAction -Execute "$repoPath\EmiliaPrintMirror.bat"
 $Trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 $Principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest

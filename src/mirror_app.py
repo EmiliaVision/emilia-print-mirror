@@ -21,6 +21,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 try:
+    import pywintypes  # noqa: F401 - Required for PyInstaller
+    import pythoncom  # noqa: F401 - Required for PyInstaller
+    import win32api  # noqa: F401 - Required for PyInstaller
     import win32print
 
     WINDOWS_AVAILABLE = True
