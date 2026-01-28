@@ -1,0 +1,9 @@
+# Spooler Queue Copy - Dependencies
+# Windows Print Spooler API access
+pywin32>=306
+
+# GUI Framework
+PyQt6>=6.6.0
+
+# For building executable
+pyinstaller>=6.3.0
