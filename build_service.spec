@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec file for Emilia Print Mirror GUI
-Build with: uv run pyinstaller build_mirror.spec
+PyInstaller spec file for Emilia Print Mirror Service
+Build with: uv run pyinstaller build_service.spec
 
 Key discovery: win32timezone is required for win32print.EnumJobs to work.
 Without it, EnumJobs silently returns 0 jobs instead of the actual queue.
@@ -10,12 +10,10 @@ Without it, EnumJobs silently returns 0 jobs instead of the actual queue.
 block_cipher = None
 
 a = Analysis(
-    ['src/mirror_app.py'],
+    ['src/mirror_service.py'],
     pathex=[],
     binaries=[],
-    datas=[
-        ('assets/icon.svg', 'assets'),
-    ],
+    datas=[],
     hiddenimports=[
         # Core pywin32 modules
         'win32print',
@@ -25,11 +23,11 @@ a = Analysis(
         'pythoncom',
         # CRITICAL: win32timezone is required for EnumJobs to work correctly
         'win32timezone',
-        # PyQt6 modules
-        'PyQt6.QtWidgets',
-        'PyQt6.QtCore',
-        'PyQt6.QtGui',
-        'PyQt6.QtSvg',
+        # Windows service modules (for service mode)
+        'win32event',
+        'win32service',
+        'win32serviceutil',
+        'servicemanager',
     ],
     hookspath=[],
     hooksconfig={},
@@ -50,19 +48,19 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='EmiliaPrintMirror',
+    name='EmiliaMirrorService',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,  # Debug mode - show console for errors
+    console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,  # No icon file (uses embedded SVG)
+    icon=None,
     uac_admin=True,
 )
