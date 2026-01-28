@@ -60,7 +60,18 @@ FLOWER_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 25
 </svg>"""
 
 APP_NAME = "Emilia Print Mirror"
-APP_VERSION = "2.2.0"
+APP_VERSION = "2.3.0"
+
+# Service constants
+SERVICE_NAME = "EmiliaPrintMirror"
+SERVICE_DISPLAY_NAME = "Emilia Print Mirror Service"
+SERVICE_INSTALL_DIR = (
+    Path(os.environ.get("PROGRAMFILES", "C:\\Program Files")) / "EmiliaPrintMirror"
+)
+SERVICE_CONFIG_DIR = (
+    Path(os.environ.get("PROGRAMDATA", "C:\\ProgramData")) / "EmiliaPrintMirror"
+)
+SERVICE_CONFIG_PATH = SERVICE_CONFIG_DIR / "config.json"
 
 # Configuration file path
 CONFIG_PATH = (
@@ -453,6 +464,75 @@ class PrinterMirrorApp(QMainWindow):
 
         layout.addLayout(btn_layout)
 
+        # === Service Options ===
+        service_group = QGroupBox("Windows Service")
+        service_layout = QVBoxLayout(service_group)
+
+        # Service status
+        self.service_status_label = QLabel("Service: Checking...")
+        self.service_status_label.setStyleSheet("font-weight: bold; padding: 5px;")
+        service_layout.addWidget(self.service_status_label)
+
+        # Service buttons
+        service_btn_layout = QHBoxLayout()
+
+        self.install_service_btn = QPushButton("📥 Install Service")
+        self.install_service_btn.setToolTip(
+            "Install as Windows Service with current configuration"
+        )
+        self.install_service_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                font-weight: bold;
+                border-radius: 5px;
+                padding: 8px;
+            }
+            QPushButton:hover { background-color: #388E3C; }
+            QPushButton:disabled { background-color: #cccccc; }
+        """)
+        self.install_service_btn.clicked.connect(self._install_service)
+        service_btn_layout.addWidget(self.install_service_btn)
+
+        self.uninstall_service_btn = QPushButton("📤 Uninstall Service")
+        self.uninstall_service_btn.setToolTip("Stop and remove Windows Service")
+        self.uninstall_service_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f44336;
+                color: white;
+                font-weight: bold;
+                border-radius: 5px;
+                padding: 8px;
+            }
+            QPushButton:hover { background-color: #d32f2f; }
+            QPushButton:disabled { background-color: #cccccc; }
+        """)
+        self.uninstall_service_btn.clicked.connect(self._uninstall_service)
+        service_btn_layout.addWidget(self.uninstall_service_btn)
+
+        service_layout.addLayout(service_btn_layout)
+
+        # Service control buttons
+        service_ctrl_layout = QHBoxLayout()
+
+        self.start_service_btn = QPushButton("▶ Start")
+        self.start_service_btn.clicked.connect(self._start_service)
+        self.start_service_btn.setEnabled(False)
+        service_ctrl_layout.addWidget(self.start_service_btn)
+
+        self.stop_service_btn = QPushButton("⬛ Stop")
+        self.stop_service_btn.clicked.connect(self._stop_service)
+        self.stop_service_btn.setEnabled(False)
+        service_ctrl_layout.addWidget(self.stop_service_btn)
+
+        self.refresh_service_btn = QPushButton("🔄 Refresh Status")
+        self.refresh_service_btn.clicked.connect(self._check_service_status)
+        service_ctrl_layout.addWidget(self.refresh_service_btn)
+
+        service_layout.addLayout(service_ctrl_layout)
+
+        layout.addWidget(service_group)
+
         # === Status ===
         self.status_label = QLabel("Status: Stopped")
         self.status_label.setStyleSheet("font-weight: bold; padding: 5px;")
@@ -478,6 +558,10 @@ class PrinterMirrorApp(QMainWindow):
         self._log(f"🌸 {APP_NAME} v{APP_VERSION}")
         self._log("Select source printer(s) and destination, then press 'Start Mirror'")
         self._log("-" * 60)
+
+        # Check service status on startup
+        if WINDOWS_AVAILABLE:
+            self._check_service_status()
 
     def _log(self, message: str):
         """Add message to log."""
@@ -665,6 +749,275 @@ class PrinterMirrorApp(QMainWindow):
             self.status_label.setStyleSheet(
                 "font-weight: bold; color: red; padding: 5px;"
             )
+
+    # === Service Management Methods ===
+
+    def _get_service_exe_path(self) -> Path:
+        """Get path to the service executable."""
+        # Check if running as frozen exe
+        if getattr(sys, "frozen", False):
+            # Running as compiled exe - look for service exe in same directory
+            exe_dir = Path(sys.executable).parent
+            service_exe = exe_dir / "EmiliaMirrorService.exe"
+            if service_exe.exists():
+                return service_exe
+        # Check in install directory
+        installed_exe = SERVICE_INSTALL_DIR / "EmiliaMirrorService.exe"
+        if installed_exe.exists():
+            return installed_exe
+        return Path("")
+
+    def _check_service_status(self):
+        """Check if the service is installed and running."""
+        try:
+            result = subprocess.run(
+                ["sc", "query", SERVICE_NAME],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                output = result.stdout
+                if "RUNNING" in output:
+                    self.service_status_label.setText("Service: ● Running")
+                    self.service_status_label.setStyleSheet(
+                        "font-weight: bold; color: #4CAF50; padding: 5px;"
+                    )
+                    self.install_service_btn.setEnabled(False)
+                    self.uninstall_service_btn.setEnabled(True)
+                    self.start_service_btn.setEnabled(False)
+                    self.stop_service_btn.setEnabled(True)
+                elif "STOPPED" in output:
+                    self.service_status_label.setText("Service: ⬛ Stopped")
+                    self.service_status_label.setStyleSheet(
+                        "font-weight: bold; color: orange; padding: 5px;"
+                    )
+                    self.install_service_btn.setEnabled(False)
+                    self.uninstall_service_btn.setEnabled(True)
+                    self.start_service_btn.setEnabled(True)
+                    self.stop_service_btn.setEnabled(False)
+                else:
+                    self.service_status_label.setText(
+                        "Service: ◐ Installed (Unknown State)"
+                    )
+                    self.service_status_label.setStyleSheet(
+                        "font-weight: bold; color: gray; padding: 5px;"
+                    )
+                    self.install_service_btn.setEnabled(False)
+                    self.uninstall_service_btn.setEnabled(True)
+                    self.start_service_btn.setEnabled(True)
+                    self.stop_service_btn.setEnabled(True)
+            else:
+                self.service_status_label.setText("Service: ○ Not Installed")
+                self.service_status_label.setStyleSheet(
+                    "font-weight: bold; color: gray; padding: 5px;"
+                )
+                self.install_service_btn.setEnabled(True)
+                self.uninstall_service_btn.setEnabled(False)
+                self.start_service_btn.setEnabled(False)
+                self.stop_service_btn.setEnabled(False)
+        except Exception as e:
+            self.service_status_label.setText(f"Service: Error checking status")
+            self._log(f"Error checking service status: {e}")
+
+    def _save_service_config(self):
+        """Save current configuration for the service."""
+        sources = self._get_selected_sources()
+        dest = self.dest_combo.currentText()
+        interval = self.interval_spin.value()
+
+        if not sources:
+            QMessageBox.warning(self, "Error", "Select at least one source printer")
+            return False
+        if not dest:
+            QMessageBox.warning(self, "Error", "Select a destination printer")
+            return False
+        if dest in sources:
+            QMessageBox.warning(self, "Error", "Destination cannot be a source printer")
+            return False
+
+        config = {
+            "source_printers": sources,
+            "dest_printer": dest,
+            "interval": interval,
+        }
+
+        try:
+            SERVICE_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            with open(SERVICE_CONFIG_PATH, "w") as f:
+                json.dump(config, f, indent=2)
+            self._log(f"Service config saved to {SERVICE_CONFIG_PATH}")
+            return True
+        except Exception as e:
+            self._log(f"Error saving service config: {e}")
+            QMessageBox.critical(self, "Error", f"Could not save config: {e}")
+            return False
+
+    def _install_service(self):
+        """Install the Windows service."""
+        # First save configuration
+        if not self._save_service_config():
+            return
+
+        # Find the service executable
+        service_exe = self._get_service_exe_path()
+
+        # If not found, try to find it relative to the app
+        if not service_exe.exists():
+            # Look in common locations
+            possible_paths = [
+                Path(sys.executable).parent / "EmiliaMirrorService.exe",
+                Path.cwd() / "dist" / "EmiliaMirrorService.exe",
+                Path.cwd() / "EmiliaMirrorService.exe",
+            ]
+            for p in possible_paths:
+                if p.exists():
+                    service_exe = p
+                    break
+
+        if not service_exe.exists():
+            QMessageBox.critical(
+                self,
+                "Error",
+                "EmiliaMirrorService.exe not found.\n\n"
+                "Please download it from:\n"
+                "https://github.com/EmiliaVision/emilia-print-mirror/releases",
+            )
+            return
+
+        try:
+            # Create install directory and copy exe
+            SERVICE_INSTALL_DIR.mkdir(parents=True, exist_ok=True)
+            installed_exe = SERVICE_INSTALL_DIR / "EmiliaMirrorService.exe"
+
+            if service_exe != installed_exe:
+                import shutil
+
+                shutil.copy2(service_exe, installed_exe)
+                self._log(f"Copied service exe to {installed_exe}")
+
+            # Install the service using sc.exe
+            cmd = [
+                "sc",
+                "create",
+                SERVICE_NAME,
+                f"binPath={installed_exe} service",
+                "start=auto",
+                f"DisplayName={SERVICE_DISPLAY_NAME}",
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+
+            if result.returncode == 0:
+                self._log(f"Service '{SERVICE_NAME}' installed successfully")
+
+                # Set description
+                subprocess.run(
+                    [
+                        "sc",
+                        "description",
+                        SERVICE_NAME,
+                        "Automatically mirrors print jobs from source printers to destination printer",
+                    ],
+                    capture_output=True,
+                )
+
+                # Start the service
+                subprocess.run(["sc", "start", SERVICE_NAME], capture_output=True)
+
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    f"Service installed and started!\n\n"
+                    f"The service will run in the background and\n"
+                    f"start automatically when Windows boots.",
+                )
+                self._check_service_status()
+            else:
+                error_msg = result.stderr or result.stdout
+                self._log(f"Failed to install service: {error_msg}")
+                QMessageBox.critical(
+                    self, "Error", f"Failed to install service:\n{error_msg}"
+                )
+
+        except Exception as e:
+            self._log(f"Error installing service: {e}")
+            QMessageBox.critical(self, "Error", f"Error installing service:\n{e}")
+
+    def _uninstall_service(self):
+        """Uninstall the Windows service."""
+        reply = QMessageBox.question(
+            self,
+            "Confirm",
+            f"Are you sure you want to uninstall the service?\n\n"
+            f"This will stop the background mirroring.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            # Stop the service first
+            subprocess.run(["sc", "stop", SERVICE_NAME], capture_output=True)
+
+            # Wait a moment for it to stop
+            import time
+
+            time.sleep(2)
+
+            # Delete the service
+            result = subprocess.run(
+                ["sc", "delete", SERVICE_NAME],
+                capture_output=True,
+                text=True,
+            )
+
+            if result.returncode == 0:
+                self._log(f"Service '{SERVICE_NAME}' uninstalled successfully")
+                QMessageBox.information(
+                    self, "Success", "Service uninstalled successfully"
+                )
+                self._check_service_status()
+            else:
+                error_msg = result.stderr or result.stdout
+                self._log(f"Failed to uninstall service: {error_msg}")
+                QMessageBox.critical(
+                    self, "Error", f"Failed to uninstall service:\n{error_msg}"
+                )
+
+        except Exception as e:
+            self._log(f"Error uninstalling service: {e}")
+            QMessageBox.critical(self, "Error", f"Error uninstalling service:\n{e}")
+
+    def _start_service(self):
+        """Start the Windows service."""
+        try:
+            result = subprocess.run(
+                ["sc", "start", SERVICE_NAME],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                self._log("Service started")
+            else:
+                self._log(f"Failed to start service: {result.stderr or result.stdout}")
+            self._check_service_status()
+        except Exception as e:
+            self._log(f"Error starting service: {e}")
+
+    def _stop_service(self):
+        """Stop the Windows service."""
+        try:
+            result = subprocess.run(
+                ["sc", "stop", SERVICE_NAME],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                self._log("Service stopped")
+            else:
+                self._log(f"Failed to stop service: {result.stderr or result.stdout}")
+            self._check_service_status()
+        except Exception as e:
+            self._log(f"Error stopping service: {e}")
 
     def closeEvent(self, event):
         """Handle close event."""

@@ -1,6 +1,6 @@
 [project]
 name = "emilia-print-mirror"
-version = "2.2.0"
+version = "2.3.0"
 description = "Windows application to automatically mirror print jobs between printers"
 readme = "README.md"
 requires-python = ">=3.9"
