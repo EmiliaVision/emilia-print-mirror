@@ -23,7 +23,7 @@ jobs:
         run: uv python install 3.12
       
       - name: Install dependencies
-        run: uv sync --dev
+        run: uv sync --all-extras
       
       - name: Build Service executable
         run: uv run pyinstaller build_service.spec --clean
