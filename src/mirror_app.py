@@ -1,16 +1,17 @@
 """
-Spooler Queue Copy - Mirror Application
+Emilia Print Mirror - Print Queue Mirroring Application
 
 GUI application to configure and run the printer mirror service.
+Supports multiple source printers mirroring to one destination.
 """
 
 import sys
 import os
 import time
 import logging
-import threading
 import subprocess
-from typing import Set, Optional, List
+import base64
+from typing import Set, Optional, List, Dict
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -38,25 +39,61 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QCheckBox,
     QSpinBox,
+    QListWidget,
+    QListWidgetItem,
+    QAbstractItemView,
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread
-from PyQt6.QtGui import QFont, QTextCursor
+from PyQt6.QtCore import Qt, pyqtSignal, QThread, QByteArray
+from PyQt6.QtGui import QFont, QTextCursor, QIcon, QPixmap
+from PyQt6.QtSvg import QSvgRenderer
+from PyQt6.QtCore import QBuffer
+
+
+# Emilia Flower Icon (PiFlower from Phosphor Icons) - Pink color
+FLOWER_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="#E91E63">
+  <path d="M210.35,129.36c-.81-.47-1.7-.92-2.62-1.36.92-.44,1.81-.89,2.62-1.36a40,40,0,1,0-40-69.28c-.81.47-1.65,1-2.48,1.59.08-1,.13-2,.13-3a40,40,0,0,0-80,0c0,.94,0,1.94.13,3-.83-.57-1.67-1.12-2.48-1.59a40,40,0,1,0-40,69.28c.81.47,1.7.92,2.62,1.36-.92.44-1.81.89-2.62,1.36a40,40,0,1,0,40,69.28c.81-.47,1.65-1,2.48-1.59-.08,1-.13,2-.13,2.95a40,40,0,0,0,80,0c0-.94-.05-1.94-.13-2.95.83.57,1.67,1.12,2.48,1.59A39.79,39.79,0,0,0,190.29,204a40.43,40.43,0,0,0,10.42-1.38,40,40,0,0,0,9.64-73.28ZM104,128a24,24,0,1,1,24,24A24,24,0,0,1,104,128Zm74.35-56.79a24,24,0,1,1,24,41.57c-6.27,3.63-18.61,6.13-35.16,7.19A40,40,0,0,0,154.53,98.1C163.73,84.28,172.08,74.84,178.35,71.21ZM128,32a24,24,0,0,1,24,24c0,7.24-4,19.19-11.36,34.06a39.81,39.81,0,0,0-25.28,0C108,75.19,104,63.24,104,56A24,24,0,0,1,128,32ZM44.86,80a24,24,0,0,1,32.79-8.79c6.27,3.63,14.62,13.07,23.82,26.89A40,40,0,0,0,88.81,120c-16.55-1.06-28.89-3.56-35.16-7.18A24,24,0,0,1,44.86,80ZM77.65,184.79a24,24,0,1,1-24-41.57c6.27-3.63,18.61-6.13,35.16-7.19a40,40,0,0,0,12.66,21.87C92.27,171.72,83.92,181.16,77.65,184.79ZM128,224a24,24,0,0,1-24-24c0-7.24,4-19.19,11.36-34.06a39.81,39.81,0,0,0,25.28,0C148,180.81,152,192.76,152,200A24,24,0,0,1,128,224Zm83.14-48a24,24,0,0,1-32.79,8.79c-6.27-3.63-14.62-13.07-23.82-26.89A40,40,0,0,0,167.19,136c16.55,1.06,28.89,3.56,35.16,7.18A24,24,0,0,1,211.14,176Z"/>
+</svg>"""
+
+APP_NAME = "Emilia Print Mirror"
+APP_VERSION = "2.1.0"
+
+
+def get_app_icon() -> QIcon:
+    """Create QIcon from embedded SVG."""
+    svg_bytes = QByteArray(FLOWER_ICON_SVG.encode())
+    renderer = QSvgRenderer(svg_bytes)
+
+    # Create pixmap at different sizes for the icon
+    icon = QIcon()
+    for size in [16, 32, 48, 64, 128, 256]:
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        from PyQt6.QtGui import QPainter
+
+        painter = QPainter(pixmap)
+        renderer.render(painter)
+        painter.end()
+        icon.addPixmap(pixmap)
+
+    return icon
 
 
 class MirrorWorker(QThread):
-    """Worker thread for the mirror service."""
+    """Worker thread for the mirror service with multiple source support."""
 
     log_message = pyqtSignal(str)
     status_changed = pyqtSignal(str)
     job_copied = pyqtSignal(str, str, int)
 
-    def __init__(self, source_printer: str, dest_printer: str, interval: float = 1.0):
+    def __init__(
+        self, source_printers: List[str], dest_printer: str, interval: float = 1.0
+    ):
         super().__init__()
-        self.source_printer = source_printer
+        self.source_printers = source_printers
         self.dest_printer = dest_printer
         self.interval = interval
         self.running = False
-        self.processed_jobs: Set[int] = set()
+        self.processed_jobs: Dict[str, Set[int]] = {p: set() for p in source_printers}
         self.spool_dir = os.path.join(
             os.environ.get("SystemRoot", "C:\\Windows"), "System32", "spool", "PRINTERS"
         )
@@ -107,7 +144,7 @@ class MirrorWorker(QThread):
                         data = f.read()
                     if data and len(data) > 0:
                         return data
-                except Exception as e:
+                except Exception:
                     pass
 
             if attempt < retries - 1:
@@ -115,7 +152,7 @@ class MirrorWorker(QThread):
 
         return None
 
-    def _copy_job(self, job_id: int, document_name: str) -> bool:
+    def _copy_job(self, source_printer: str, job_id: int, document_name: str) -> bool:
         """Copy a job to the destination printer."""
         try:
             spool_data = self._read_spool_data(job_id)
@@ -126,7 +163,7 @@ class MirrorWorker(QThread):
 
             handle = win32print.OpenPrinter(self.dest_printer)
             try:
-                doc_info = (f"[MIRROR] {document_name}", "", "RAW")
+                doc_info = (f"[MIRROR:{source_printer}] {document_name}", "", "RAW")
                 new_job_id = win32print.StartDocPrinter(handle, 1, doc_info)
                 try:
                     win32print.StartPagePrinter(handle)
@@ -136,9 +173,9 @@ class MirrorWorker(QThread):
                     win32print.EndDocPrinter(handle)
 
                 self.log(
-                    f"OK! Job {job_id} -> {self.dest_printer} (ID: {new_job_id}, {len(spool_data)} bytes)"
+                    f"OK! [{source_printer}] Job {job_id} -> {self.dest_printer} (ID: {new_job_id}, {len(spool_data)} bytes)"
                 )
-                self.job_copied.emit(self.source_printer, self.dest_printer, job_id)
+                self.job_copied.emit(source_printer, self.dest_printer, job_id)
                 return True
             finally:
                 win32print.ClosePrinter(handle)
@@ -147,11 +184,11 @@ class MirrorWorker(QThread):
             self.log(f"Error copying job {job_id}: {e}")
             return False
 
-    def _get_current_jobs(self) -> dict:
-        """Get current jobs from source printer."""
+    def _get_current_jobs(self, printer_name: str) -> dict:
+        """Get current jobs from a printer."""
         jobs = {}
         try:
-            handle = win32print.OpenPrinter(self.source_printer)
+            handle = win32print.OpenPrinter(printer_name)
             try:
                 job_list = win32print.EnumJobs(handle, 0, -1, 1)
                 for job in job_list:
@@ -164,19 +201,19 @@ class MirrorWorker(QThread):
                     }
             finally:
                 win32print.ClosePrinter(handle)
-        except Exception as e:
+        except Exception:
             pass
 
         return jobs
 
     def run(self):
-        """Run the mirror service."""
+        """Run the mirror service for multiple source printers."""
         self.running = True
         self.status_changed.emit("running")
 
-        self.log(f"Mirror started: {self.source_printer} -> {self.dest_printer}")
+        sources_str = ", ".join(self.source_printers)
+        self.log(f"Mirror started: [{sources_str}] -> {self.dest_printer}")
 
-        # Verify spool access
         try:
             os.listdir(self.spool_dir)
         except PermissionError:
@@ -184,34 +221,40 @@ class MirrorWorker(QThread):
             self.status_changed.emit("error")
             return
 
-        # Get existing jobs to ignore
-        existing_jobs = self._get_current_jobs()
-        self.processed_jobs = set(existing_jobs.keys())
+        for printer in self.source_printers:
+            existing_jobs = self._get_current_jobs(printer)
+            self.processed_jobs[printer] = set(existing_jobs.keys())
+            self.log(f"[{printer}] Ignoring {len(existing_jobs)} existing job(s)")
 
         self.log("Waiting for print jobs...")
 
         while self.running:
-            current_jobs = self._get_current_jobs()
-            new_job_ids = set(current_jobs.keys()) - self.processed_jobs
-
-            for job_id in sorted(new_job_ids):
+            for printer in self.source_printers:
                 if not self.running:
                     break
 
-                job_info = current_jobs[job_id]
-                document = job_info["document"]
+                current_jobs = self._get_current_jobs(printer)
+                new_job_ids = set(current_jobs.keys()) - self.processed_jobs[printer]
 
-                if document.startswith("[MIRROR]") or document.startswith("[COPY]"):
-                    self.processed_jobs.add(job_id)
-                    continue
+                for job_id in sorted(new_job_ids):
+                    if not self.running:
+                        break
 
-                self.log(f">>> New job: [{job_id}] {document}")
-                time.sleep(1.0)
+                    job_info = current_jobs[job_id]
+                    document = job_info["document"]
 
-                self._copy_job(job_id, document)
-                self.processed_jobs.add(job_id)
+                    if document.startswith("[MIRROR"):
+                        self.processed_jobs[printer].add(job_id)
+                        continue
 
-            self.processed_jobs &= set(current_jobs.keys())
+                    self.log(f">>> [{printer}] New job: [{job_id}] {document}")
+                    time.sleep(1.0)
+
+                    self._copy_job(printer, job_id, document)
+                    self.processed_jobs[printer].add(job_id)
+
+                self.processed_jobs[printer] &= set(current_jobs.keys())
+
             time.sleep(self.interval)
 
         self.status_changed.emit("stopped")
@@ -222,7 +265,7 @@ class MirrorWorker(QThread):
 
 
 class PrinterMirrorApp(QMainWindow):
-    """Main Mirror Application."""
+    """Main Emilia Print Mirror Application."""
 
     def __init__(self):
         super().__init__()
@@ -233,29 +276,65 @@ class PrinterMirrorApp(QMainWindow):
         self._load_printers()
 
     def _setup_ui(self):
-        self.setWindowTitle("Spooler Queue Copy - Printer Mirror")
-        self.setMinimumSize(700, 500)
+        self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
+        self.setMinimumSize(800, 650)
+
+        # Set application icon
+        app_icon = get_app_icon()
+        self.setWindowIcon(app_icon)
+        QApplication.instance().setWindowIcon(app_icon)
 
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
 
+        # === Header with logo ===
+        header_layout = QHBoxLayout()
+
+        # Logo
+        logo_label = QLabel()
+        svg_bytes = QByteArray(FLOWER_ICON_SVG.encode())
+        renderer = QSvgRenderer(svg_bytes)
+        pixmap = QPixmap(48, 48)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        from PyQt6.QtGui import QPainter
+
+        painter = QPainter(pixmap)
+        renderer.render(painter)
+        painter.end()
+        logo_label.setPixmap(pixmap)
+        header_layout.addWidget(logo_label)
+
+        # Title
+        title_label = QLabel(f"<h2 style='color: #E91E63; margin: 0;'>{APP_NAME}</h2>")
+        header_layout.addWidget(title_label)
+        header_layout.addStretch()
+
+        layout.addLayout(header_layout)
+
         # === Configuration ===
         config_group = QGroupBox("Mirror Configuration")
         config_layout = QVBoxLayout(config_group)
 
-        # Source printer
-        source_layout = QHBoxLayout()
-        source_layout.addWidget(QLabel("SOURCE Printer:"))
-        self.source_combo = QComboBox()
-        self.source_combo.setMinimumWidth(300)
-        source_layout.addWidget(self.source_combo, 1)
+        # Source printers (multi-select list)
+        source_layout = QVBoxLayout()
+        source_label = QLabel("SOURCE Printers (select one or more):")
+        source_label.setStyleSheet("font-weight: bold;")
+        source_layout.addWidget(source_label)
+
+        self.source_list = QListWidget()
+        self.source_list.setSelectionMode(
+            QAbstractItemView.SelectionMode.MultiSelection
+        )
+        self.source_list.setMaximumHeight(120)
+        source_layout.addWidget(self.source_list)
+
         config_layout.addLayout(source_layout)
 
         # Arrow
-        arrow_label = QLabel("↓  Jobs will be automatically copied to  ↓")
+        arrow_label = QLabel("↓  Jobs from selected printers will be copied to  ↓")
         arrow_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        arrow_label.setStyleSheet("font-weight: bold; color: #0066cc; padding: 10px;")
+        arrow_label.setStyleSheet("font-weight: bold; color: #E91E63; padding: 10px;")
         config_layout.addWidget(arrow_label)
 
         # Destination printer
@@ -268,7 +347,7 @@ class PrinterMirrorApp(QMainWindow):
 
         # Options
         options_layout = QHBoxLayout()
-        self.auto_config_check = QCheckBox("Auto-configure printer (KeepPrintedJobs)")
+        self.auto_config_check = QCheckBox("Auto-configure printers (KeepPrintedJobs)")
         self.auto_config_check.setChecked(True)
         options_layout.addWidget(self.auto_config_check)
 
@@ -289,13 +368,13 @@ class PrinterMirrorApp(QMainWindow):
         self.start_btn.setMinimumHeight(40)
         self.start_btn.setStyleSheet("""
             QPushButton {
-                background-color: #28a745;
+                background-color: #E91E63;
                 color: white;
                 font-weight: bold;
                 font-size: 14px;
                 border-radius: 5px;
             }
-            QPushButton:hover { background-color: #218838; }
+            QPushButton:hover { background-color: #C2185B; }
             QPushButton:disabled { background-color: #cccccc; }
         """)
         self.start_btn.clicked.connect(self._start_mirror)
@@ -306,19 +385,19 @@ class PrinterMirrorApp(QMainWindow):
         self.stop_btn.setEnabled(False)
         self.stop_btn.setStyleSheet("""
             QPushButton {
-                background-color: #dc3545;
+                background-color: #424242;
                 color: white;
                 font-weight: bold;
                 font-size: 14px;
                 border-radius: 5px;
             }
-            QPushButton:hover { background-color: #c82333; }
+            QPushButton:hover { background-color: #212121; }
             QPushButton:disabled { background-color: #cccccc; }
         """)
         self.stop_btn.clicked.connect(self._stop_mirror)
         btn_layout.addWidget(self.stop_btn)
 
-        self.refresh_btn = QPushButton("🔄 Refresh Printers")
+        self.refresh_btn = QPushButton("🔄 Refresh")
         self.refresh_btn.clicked.connect(self._load_printers)
         btn_layout.addWidget(self.refresh_btn)
 
@@ -336,7 +415,7 @@ class PrinterMirrorApp(QMainWindow):
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
         self.log_text.setFont(QFont("Consolas", 9))
-        self.log_text.setStyleSheet("background-color: #1e1e1e; color: #00ff00;")
+        self.log_text.setStyleSheet("background-color: #1a1a2e; color: #E91E63;")
         log_layout.addWidget(self.log_text)
 
         clear_btn = QPushButton("Clear log")
@@ -346,9 +425,9 @@ class PrinterMirrorApp(QMainWindow):
         layout.addWidget(log_group, 1)
 
         # Initial message
-        self._log("Spooler Queue Copy - Mirror v2.0")
-        self._log("Select printers and press 'Start Mirror'")
-        self._log("-" * 50)
+        self._log(f"🌸 {APP_NAME} v{APP_VERSION}")
+        self._log("Select source printer(s) and destination, then press 'Start Mirror'")
+        self._log("-" * 60)
 
     def _log(self, message: str):
         """Add message to log."""
@@ -358,7 +437,7 @@ class PrinterMirrorApp(QMainWindow):
 
     def _load_printers(self):
         """Load printer list."""
-        self.source_combo.clear()
+        self.source_list.clear()
         self.dest_combo.clear()
 
         if not WINDOWS_AVAILABLE:
@@ -373,17 +452,24 @@ class PrinterMirrorApp(QMainWindow):
             for p in printers:
                 name = p["pPrinterName"]
                 self.printers.append(name)
-                self.source_combo.addItem(name)
+
+                item = QListWidgetItem(name)
+                self.source_list.addItem(item)
                 self.dest_combo.addItem(name)
 
             self._log(f"Found {len(self.printers)} printer(s)")
 
-            # Select defaults if they exist
+            # Auto-select printers with "Org" in name as sources
+            for i in range(self.source_list.count()):
+                item = self.source_list.item(i)
+                if item and "Org" in item.text():
+                    item.setSelected(True)
+
+            # Auto-select printer with "Copy" as destination
             for i, name in enumerate(self.printers):
-                if "Org" in name:
-                    self.source_combo.setCurrentIndex(i)
                 if "Copy" in name:
                     self.dest_combo.setCurrentIndex(i)
+                    break
 
         except Exception as e:
             self._log(f"Error loading printers: {e}")
@@ -399,42 +485,52 @@ class PrinterMirrorApp(QMainWindow):
                 self._log(f"Configured KeepPrintedJobs on {printer_name}")
                 return True
             else:
-                self._log(f"Warning: Could not configure KeepPrintedJobs")
+                self._log(f"Warning: Could not configure {printer_name}")
                 return False
         except Exception as e:
             self._log(f"Error configuring printer: {e}")
             return False
 
+    def _get_selected_sources(self) -> List[str]:
+        """Get list of selected source printers."""
+        selected = []
+        for item in self.source_list.selectedItems():
+            selected.append(item.text())
+        return selected
+
     def _start_mirror(self):
         """Start the mirror service."""
-        source = self.source_combo.currentText()
+        sources = self._get_selected_sources()
         dest = self.dest_combo.currentText()
 
-        if not source or not dest:
-            QMessageBox.warning(self, "Error", "Select both printers")
+        if not sources:
+            QMessageBox.warning(self, "Error", "Select at least one source printer")
             return
 
-        if source == dest:
-            QMessageBox.warning(self, "Error", "Printers must be different")
+        if not dest:
+            QMessageBox.warning(self, "Error", "Select a destination printer")
             return
 
-        # Configure source printer if checked
+        if dest in sources:
+            QMessageBox.warning(self, "Error", "Destination cannot be a source printer")
+            return
+
         if self.auto_config_check.isChecked():
-            self._configure_printer(source)
+            for source in sources:
+                self._configure_printer(source)
 
-        # Start worker
         interval = self.interval_spin.value()
-        self.worker = MirrorWorker(source, dest, interval)
+        self.worker = MirrorWorker(sources, dest, interval)
         self.worker.log_message.connect(self._log)
         self.worker.status_changed.connect(self._on_status_changed)
         self.worker.start()
 
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
-        self.source_combo.setEnabled(False)
+        self.source_list.setEnabled(False)
         self.dest_combo.setEnabled(False)
 
-        self._log(f"Starting mirror: {source} -> {dest}")
+        self._log(f"Starting mirror: {sources} -> {dest}")
 
     def _stop_mirror(self):
         """Stop the mirror service."""
@@ -445,7 +541,7 @@ class PrinterMirrorApp(QMainWindow):
 
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
-        self.source_combo.setEnabled(True)
+        self.source_list.setEnabled(True)
         self.dest_combo.setEnabled(True)
 
     def _on_status_changed(self, status: str):
@@ -453,7 +549,7 @@ class PrinterMirrorApp(QMainWindow):
         if status == "running":
             self.status_label.setText("Status: ● Running")
             self.status_label.setStyleSheet(
-                "font-weight: bold; color: green; padding: 5px;"
+                "font-weight: bold; color: #4CAF50; padding: 5px;"
             )
         elif status == "stopped":
             self.status_label.setText("Status: ⬛ Stopped")
@@ -487,6 +583,10 @@ class PrinterMirrorApp(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    app.setApplicationName(APP_NAME)
+
+    # Set app icon
+    app.setWindowIcon(get_app_icon())
 
     # Check admin
     if WINDOWS_AVAILABLE:

@@ -1,14 +1,14 @@
-# Spooler Queue Copy
+# Emilia Print Mirror
 
-A Windows application to automatically mirror print jobs from one printer to another.
+A Windows application to automatically mirror print jobs from one or more printers to a destination printer.
 
 ## Features
 
-- **Automatic Print Mirroring**: When you print to a source printer, the job is automatically copied to a destination printer
-- **GUI Application**: Easy-to-use graphical interface for configuration
+- **Multi-Source Support**: Monitor multiple source printers simultaneously
+- **Automatic Print Mirroring**: Jobs are automatically copied to the destination printer
+- **GUI Application**: Easy-to-use graphical interface with the Emilia flower logo
 - **Windows Service**: Can run as a background Windows service
 - **Real-time Monitoring**: Monitors print queues in real-time
-- **Admin-free operation**: Works with proper configuration
 
 ## Requirements
 
@@ -16,20 +16,18 @@ A Windows application to automatically mirror print jobs from one printer to ano
 - Python 3.9+ (for development)
 - Administrator privileges (recommended for spool file access)
 
-## Installation
+## Quick Start
 
 ### Option 1: Run from Source
 
-```bash
+```powershell
 # Clone the repository
 git clone <repository-url>
-cd spooler-queue-copy
+cd emilia-print-mirror
 
-# Create virtual environment
+# Create virtual environment and install dependencies
 python -m venv venv
 venv\Scripts\activate
-
-# Install dependencies
 pip install -r requirements.txt
 
 # Run the GUI application
@@ -38,50 +36,38 @@ python src/mirror_app.py
 
 ### Option 2: Using uv (Recommended)
 
-```bash
+```powershell
 # Install uv
 irm https://astral.sh/uv/install.ps1 | iex
 
-# Install dependencies
+# Install dependencies and run
 uv sync
-
-# Run the application
 uv run python src/mirror_app.py
 ```
 
 ### Option 3: Build Executable
 
-```bash
-# Install dependencies
+```powershell
 pip install -r requirements.txt
-
-# Build the executable
 pyinstaller build_mirror.spec
-
-# The executable will be in dist/SpoolerQueueCopy.exe
+# Executable will be in dist/EmiliaPrintMirror.exe
 ```
 
 ## Usage
 
 ### GUI Application
 
-1. Run `SpoolerQueueCopy.exe` as Administrator
-2. Select the **SOURCE** printer (where you will print)
-3. Select the **DESTINATION** printer (where jobs will be copied)
+1. Run the application as Administrator
+2. Select one or more **SOURCE** printers (Ctrl+click for multiple)
+3. Select the **DESTINATION** printer
 4. Click **Start Mirror**
-5. Print something to the source printer - it will be automatically copied to the destination
+5. Print to any source printer - it will be automatically copied to the destination
 
-### Command Line Service
+### Windows Service
 
-```bash
-# Show help
-python src/mirror_service.py help
-
-# Configure printers
-python src/mirror_service.py config "SourcePrinter" "DestinationPrinter"
-
-# Run in console mode
-python src/mirror_service.py console
+```powershell
+# Configure printers (run once)
+python src/mirror_service.py config "SourcePrinter1,SourcePrinter2" "DestinationPrinter"
 
 # Install as Windows service
 python src/mirror_service.py install
@@ -89,36 +75,42 @@ python src/mirror_service.py install
 # Start the service
 python src/mirror_service.py start
 
+# Check status
+python src/mirror_service.py status
+
 # Stop the service
 python src/mirror_service.py stop
 
 # Uninstall the service
 python src/mirror_service.py uninstall
+
+# Run in console mode (for testing)
+python src/mirror_service.py console
 ```
 
 ## Configuration
 
-### Printer Setup
+### Printer Requirements
 
-Before using the mirror, ensure the source printer has **KeepPrintedJobs** enabled:
+The source printer(s) must have **KeepPrintedJobs** enabled:
 
 ```powershell
 Set-Printer -Name "YourSourcePrinter" -KeepPrintedJobs $true
 ```
 
-The GUI application can do this automatically if you check the "Auto-configure printer" option.
+The GUI application can do this automatically if you check the "Auto-configure printers" option.
 
 ### Configuration File
 
-The service stores its configuration in:
+Service configuration is stored in:
 ```
-C:\ProgramData\SpoolerQueueCopy\config.json
+C:\ProgramData\EmiliaPrintMirror\config.json
 ```
 
-Example configuration:
+Example:
 ```json
 {
-  "source_printer": "EmiliaCloudPrinterEpsonOrg",
+  "source_printers": ["EmiliaCloudPrinterEpsonOrg", "EmiliaCloudPrinterEpsonOrg2"],
   "dest_printer": "EmiliaCloudPrinterEpsonCopy",
   "interval": 1.0
 }
@@ -126,72 +118,72 @@ Example configuration:
 
 ## How It Works
 
-1. The application monitors the Windows print spooler for new jobs on the source printer
+```
+┌─────────────────────┐
+│ Source Printer 1    │──┐
+└─────────────────────┘  │
+                         │    ┌─────────────────────┐
+┌─────────────────────┐  ├───▶│ Destination Printer │
+│ Source Printer 2    │──┤    └─────────────────────┘
+└─────────────────────┘  │
+                         │
+┌─────────────────────┐  │
+│ Source Printer N    │──┘
+└─────────────────────┘
+```
+
+1. The application monitors Windows print spooler for new jobs on source printer(s)
 2. When a new job is detected, it reads the spool file from `C:\Windows\System32\spool\PRINTERS`
-3. The raw print data is then sent to the destination printer
+3. The raw print data is sent to the destination printer
 4. Jobs prefixed with `[MIRROR]` are ignored to prevent infinite loops
 
-## Architecture
+## Creating Test Printers
 
-```
-spooler-queue-copy/
-├── src/
-│   ├── mirror_app.py      # GUI application (PyQt6)
-│   ├── mirror_service.py  # Windows service / CLI
-│   ├── print_spooler.py   # Windows Print Spooler API wrapper
-│   └── __init__.py
-├── requirements.txt       # Python dependencies
-├── build_mirror.spec      # PyInstaller configuration
-├── pyproject.toml         # Project configuration (uv)
-└── README.md
+```powershell
+# Create TCP/IP printer port
+Add-PrinterPort -Name "EmiliaCloud-Test" -PrinterHostAddress "printer.example.com" -PortNumber 9100
+
+# Create printers with Epson driver
+Add-Printer -Name "EmiliaPrinterOrg" -DriverName "EPSON TM-T20II Receipt5" -PortName "EmiliaCloud-Test"
+Add-Printer -Name "EmiliaPrinterCopy" -DriverName "EPSON TM-T20II Receipt5" -PortName "EmiliaCloud-Test"
+
+# Enable KeepPrintedJobs on source
+Set-Printer -Name "EmiliaPrinterOrg" -KeepPrintedJobs $true
 ```
 
 ## Troubleshooting
 
 ### "No access to spool directory"
-
-Run the application as Administrator. The spool files are in a protected system directory.
+Run the application as Administrator.
 
 ### "Could not read job"
-
-1. Ensure `KeepPrintedJobs` is enabled on the source printer
-2. Check that no other application is locking the spool files
-3. Try increasing the interval between checks
-
-### "Job not copied"
-
-1. Verify both printers are online and accessible
-2. Check the Windows Event Log for print spooler errors
-3. Ensure the destination printer driver is compatible with the job data
+1. Ensure `KeepPrintedJobs` is enabled on source printer(s)
+2. Try increasing the interval between checks
 
 ### Service won't start
+1. Check log file at `C:\ProgramData\EmiliaPrintMirror\service.log`
+2. Run `python src/mirror_service.py console` to see errors
 
-1. Check the log file at `C:\ProgramData\SpoolerQueueCopy\service.log`
-2. Ensure the configuration file has valid printer names
-3. Run `python src/mirror_service.py console` to see errors in real-time
+## Project Structure
 
-## Creating Printers for Testing
-
-```powershell
-# Create a TCP/IP printer port
-Add-PrinterPort -Name "TestPort" -PrinterHostAddress "printer.example.com" -PortNumber 9100
-
-# Create printers with Epson driver
-Add-Printer -Name "TestPrinterOrg" -DriverName "EPSON TM-T20II Receipt5" -PortName "TestPort"
-Add-Printer -Name "TestPrinterCopy" -DriverName "EPSON TM-T20II Receipt5" -PortName "TestPort"
-
-# Or with Generic driver
-Add-Printer -Name "TestPrinterOrg" -DriverName "Generic / Text Only" -PortName "TestPort"
-Add-Printer -Name "TestPrinterCopy" -DriverName "Generic / Text Only" -PortName "TestPort"
+```
+emilia-print-mirror/
+├── src/
+│   ├── mirror_app.py      # GUI application (PyQt6)
+│   ├── mirror_service.py  # Windows service / CLI
+│   └── __init__.py
+├── assets/
+│   └── icon.svg           # Emilia flower icon
+├── requirements.txt
+├── build_mirror.spec      # PyInstaller config
+├── pyproject.toml
+└── README.md
 ```
 
 ## License
 
 MIT License
 
-## Contributing
+## Credits
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
+- Icon: Flower icon from [Phosphor Icons](https://phosphoricons.com/)

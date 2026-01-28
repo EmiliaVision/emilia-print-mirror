@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec file for Spooler Queue Copy Mirror App
+PyInstaller spec file for Emilia Print Mirror
 Build with: pyinstaller build_mirror.spec
 """
 
@@ -10,7 +10,9 @@ a = Analysis(
     ['src/mirror_app.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[
+        ('assets/icon.svg', 'assets'),
+    ],
     hiddenimports=[
         'win32print',
         'win32api',
@@ -18,6 +20,7 @@ a = Analysis(
         'PyQt6.QtWidgets',
         'PyQt6.QtCore',
         'PyQt6.QtGui',
+        'PyQt6.QtSvg',
     ],
     hookspath=[],
     hooksconfig={},
@@ -38,19 +41,19 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='SpoolerQueueCopy',
+    name='EmiliaPrintMirror',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,  # GUI application
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,  # Add icon here: icon='icon.ico'
-    uac_admin=True,  # Request administrator privileges
+    icon='assets/icon.ico',  # Will need to convert SVG to ICO
+    uac_admin=True,
 )

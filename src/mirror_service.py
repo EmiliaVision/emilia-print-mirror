@@ -1,8 +1,8 @@
 """
-Spooler Queue Copy - Windows Service
+Emilia Print Mirror - Windows Service
 
 Windows service for automatic printer mirroring.
-Can be installed as a system service.
+Supports multiple source printers.
 """
 
 import sys
@@ -10,21 +10,28 @@ import os
 import time
 import json
 import logging
-from typing import Set, Optional
+from typing import Set, Optional, List, Dict
 from pathlib import Path
+
+APP_NAME = "Emilia Print Mirror"
+SERVICE_NAME = "EmiliaPrintMirror"
 
 # Default configuration
 DEFAULT_CONFIG = {
-    "source_printer": "EmiliaCloudPrinterEpsonOrg",
+    "source_printers": ["EmiliaCloudPrinterEpsonOrg"],
     "dest_printer": "EmiliaCloudPrinterEpsonCopy",
     "interval": 1.0,
-    "log_file": "mirror_service.log",
 }
 
 CONFIG_PATH = (
     Path(os.environ.get("PROGRAMDATA", "C:\\ProgramData"))
-    / "SpoolerQueueCopy"
+    / "EmiliaPrintMirror"
     / "config.json"
+)
+LOG_PATH = (
+    Path(os.environ.get("PROGRAMDATA", "C:\\ProgramData"))
+    / "EmiliaPrintMirror"
+    / "service.log"
 )
 
 
@@ -33,7 +40,11 @@ def get_config() -> dict:
     if CONFIG_PATH.exists():
         try:
             with open(CONFIG_PATH, "r") as f:
-                return {**DEFAULT_CONFIG, **json.load(f)}
+                config = json.load(f)
+                # Handle legacy single source_printer config
+                if "source_printer" in config and "source_printers" not in config:
+                    config["source_printers"] = [config["source_printer"]]
+                return {**DEFAULT_CONFIG, **config}
         except:
             pass
     return DEFAULT_CONFIG
@@ -59,17 +70,21 @@ except ImportError:
 
 
 class PrinterMirrorCore:
-    """Core mirror service (no GUI dependencies)."""
+    """Core mirror service with multi-source support."""
 
     def __init__(
-        self, source_printer: str, dest_printer: str, interval: float = 1.0, logger=None
+        self,
+        source_printers: List[str],
+        dest_printer: str,
+        interval: float = 1.0,
+        logger=None,
     ):
-        self.source_printer = source_printer
+        self.source_printers = source_printers
         self.dest_printer = dest_printer
         self.interval = interval
         self.logger = logger or logging.getLogger(__name__)
         self.running = False
-        self.processed_jobs: Set[int] = set()
+        self.processed_jobs: Dict[str, Set[int]] = {p: set() for p in source_printers}
         self.spool_dir = os.path.join(
             os.environ.get("SystemRoot", "C:\\Windows"), "System32", "spool", "PRINTERS"
         )
@@ -86,7 +101,6 @@ class PrinterMirrorCore:
                 if os.path.exists(filepath):
                     return filepath
 
-            # Find most recent SPL file
             spl_files = []
             for f in os.listdir(self.spool_dir):
                 if f.upper().endswith(".SPL"):
@@ -123,7 +137,7 @@ class PrinterMirrorCore:
                 time.sleep(0.5)
         return None
 
-    def _copy_job(self, job_id: int, document_name: str) -> bool:
+    def _copy_job(self, source_printer: str, job_id: int, document_name: str) -> bool:
         """Copy a job to the destination printer."""
         try:
             spool_data = self._read_spool_data(job_id)
@@ -133,7 +147,7 @@ class PrinterMirrorCore:
 
             handle = win32print.OpenPrinter(self.dest_printer)
             try:
-                doc_info = (f"[MIRROR] {document_name}", "", "RAW")
+                doc_info = (f"[MIRROR:{source_printer}] {document_name}", "", "RAW")
                 new_job_id = win32print.StartDocPrinter(handle, 1, doc_info)
                 try:
                     win32print.StartPagePrinter(handle)
@@ -143,7 +157,7 @@ class PrinterMirrorCore:
                     win32print.EndDocPrinter(handle)
 
                 self.log(
-                    f"OK: Job {job_id} -> {self.dest_printer} (new: {new_job_id}, {len(spool_data)} bytes)"
+                    f"OK: [{source_printer}] Job {job_id} -> {self.dest_printer} (new: {new_job_id}, {len(spool_data)} bytes)"
                 )
                 return True
             finally:
@@ -152,11 +166,11 @@ class PrinterMirrorCore:
             self.log(f"Error copying job {job_id}: {e}")
             return False
 
-    def _get_current_jobs(self) -> dict:
-        """Get current jobs from source printer."""
+    def _get_current_jobs(self, printer_name: str) -> dict:
+        """Get current jobs from a printer."""
         jobs = {}
         try:
-            handle = win32print.OpenPrinter(self.source_printer)
+            handle = win32print.OpenPrinter(printer_name)
             try:
                 job_list = win32print.EnumJobs(handle, 0, -1, 1)
                 for job in job_list:
@@ -174,36 +188,43 @@ class PrinterMirrorCore:
     def run_once(self) -> int:
         """Execute one iteration of the mirror. Returns number of jobs copied."""
         copied = 0
-        current_jobs = self._get_current_jobs()
-        new_job_ids = set(current_jobs.keys()) - self.processed_jobs
 
-        for job_id in sorted(new_job_ids):
+        for printer in self.source_printers:
             if not self.running:
                 break
 
-            job_info = current_jobs[job_id]
-            document = job_info["document"]
+            current_jobs = self._get_current_jobs(printer)
+            new_job_ids = set(current_jobs.keys()) - self.processed_jobs.get(
+                printer, set()
+            )
 
-            # Skip already mirrored jobs
-            if document.startswith("[MIRROR]") or document.startswith("[COPY]"):
-                self.processed_jobs.add(job_id)
-                continue
+            for job_id in sorted(new_job_ids):
+                if not self.running:
+                    break
 
-            self.log(f"New job detected: [{job_id}] {document}")
-            time.sleep(1.0)
+                job_info = current_jobs[job_id]
+                document = job_info["document"]
 
-            if self._copy_job(job_id, document):
-                copied += 1
-            self.processed_jobs.add(job_id)
+                if document.startswith("[MIRROR"):
+                    self.processed_jobs[printer].add(job_id)
+                    continue
 
-        # Clean up processed jobs that no longer exist
-        self.processed_jobs &= set(current_jobs.keys())
+                self.log(f"New job: [{printer}] [{job_id}] {document}")
+                time.sleep(1.0)
+
+                if self._copy_job(printer, job_id, document):
+                    copied += 1
+                self.processed_jobs[printer].add(job_id)
+
+            self.processed_jobs[printer] &= set(current_jobs.keys())
+
         return copied
 
     def run(self):
         """Run the main mirror loop."""
         self.running = True
-        self.log(f"Mirror started: {self.source_printer} -> {self.dest_printer}")
+        sources_str = ", ".join(self.source_printers)
+        self.log(f"Mirror started: [{sources_str}] -> {self.dest_printer}")
 
         try:
             os.listdir(self.spool_dir)
@@ -213,9 +234,11 @@ class PrinterMirrorCore:
             )
             return
 
-        existing_jobs = self._get_current_jobs()
-        self.processed_jobs = set(existing_jobs.keys())
-        self.log(f"Ignoring {len(self.processed_jobs)} existing job(s)")
+        # Initialize processed jobs for all source printers
+        for printer in self.source_printers:
+            existing_jobs = self._get_current_jobs(printer)
+            self.processed_jobs[printer] = set(existing_jobs.keys())
+            self.log(f"[{printer}] Ignoring {len(existing_jobs)} existing job(s)")
 
         while self.running:
             self.run_once()
@@ -230,14 +253,12 @@ class PrinterMirrorCore:
 
 if SERVICE_AVAILABLE:
 
-    class SpoolerQueueCopyService(win32serviceutil.ServiceFramework):
-        """Windows Service for Spooler Queue Copy."""
+    class EmiliaPrintMirrorService(win32serviceutil.ServiceFramework):
+        """Windows Service for Emilia Print Mirror."""
 
-        _svc_name_ = "SpoolerQueueCopy"
-        _svc_display_name_ = "Spooler Queue Copy Mirror Service"
-        _svc_description_ = (
-            "Automatically copies print jobs from one printer to another"
-        )
+        _svc_name_ = SERVICE_NAME
+        _svc_display_name_ = f"{APP_NAME} Service"
+        _svc_description_ = "Automatically mirrors print jobs from source printers to a destination printer"
 
         def __init__(self, args):
             win32serviceutil.ServiceFramework.__init__(self, args)
@@ -245,17 +266,12 @@ if SERVICE_AVAILABLE:
             self.mirror = None
 
             # Configure logging
-            log_path = (
-                Path(os.environ.get("PROGRAMDATA", "C:\\ProgramData"))
-                / "SpoolerQueueCopy"
-                / "service.log"
-            )
-            log_path.parent.mkdir(parents=True, exist_ok=True)
+            LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
             logging.basicConfig(
                 level=logging.INFO,
                 format="%(asctime)s - %(levelname)s - %(message)s",
-                handlers=[logging.FileHandler(str(log_path)), logging.StreamHandler()],
+                handlers=[logging.FileHandler(str(LOG_PATH)), logging.StreamHandler()],
             )
             self.logger = logging.getLogger(__name__)
 
@@ -277,26 +293,28 @@ if SERVICE_AVAILABLE:
             config = get_config()
 
             self.mirror = PrinterMirrorCore(
-                source_printer=config["source_printer"],
+                source_printers=config["source_printers"],
                 dest_printer=config["dest_printer"],
                 interval=config["interval"],
                 logger=self.logger,
             )
 
             self.mirror.running = True
+            sources_str = ", ".join(config["source_printers"])
             self.logger.info(
-                f"Service started: {config['source_printer']} -> {config['dest_printer']}"
+                f"Service started: [{sources_str}] -> {config['dest_printer']}"
             )
 
-            # Initialize
             try:
                 os.listdir(self.mirror.spool_dir)
             except PermissionError:
                 self.logger.error("No access to spool directory")
                 return
 
-            existing = self.mirror._get_current_jobs()
-            self.mirror.processed_jobs = set(existing.keys())
+            # Initialize
+            for printer in self.mirror.source_printers:
+                existing = self.mirror._get_current_jobs(printer)
+                self.mirror.processed_jobs[printer] = set(existing.keys())
 
             # Main loop
             while self.mirror.running:
@@ -317,21 +335,19 @@ def install_service():
         return False
 
     try:
-        # Save default configuration first
         config = get_config()
         save_config(config)
         print(f"Configuration saved to: {CONFIG_PATH}")
 
-        # Install service
         win32serviceutil.InstallService(
-            SpoolerQueueCopyService._svc_name_,
-            SpoolerQueueCopyService._svc_name_,
-            SpoolerQueueCopyService._svc_display_name_,
+            EmiliaPrintMirrorService._svc_name_,
+            EmiliaPrintMirrorService._svc_name_,
+            EmiliaPrintMirrorService._svc_display_name_,
             startType=win32service.SERVICE_AUTO_START,
-            description=SpoolerQueueCopyService._svc_description_,
+            description=EmiliaPrintMirrorService._svc_description_,
         )
         print(
-            f"Service '{SpoolerQueueCopyService._svc_display_name_}' installed successfully"
+            f"Service '{EmiliaPrintMirrorService._svc_display_name_}' installed successfully"
         )
         return True
     except Exception as e:
@@ -346,7 +362,7 @@ def uninstall_service():
         return False
 
     try:
-        win32serviceutil.RemoveService(SpoolerQueueCopyService._svc_name_)
+        win32serviceutil.RemoveService(EmiliaPrintMirrorService._svc_name_)
         print("Service uninstalled successfully")
         return True
     except Exception as e:
@@ -362,19 +378,20 @@ def run_console():
         level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
     )
 
+    sources_str = ", ".join(config["source_printers"])
     print(f"""
     ╔═══════════════════════════════════════════════════════════╗
-    ║          SPOOLER QUEUE COPY - MIRROR SERVICE              ║
+    ║              🌸 {APP_NAME}                       ║
     ╚═══════════════════════════════════════════════════════════╝
     
-    Source:      {config["source_printer"]}
+    Source(s):   {sources_str}
     Destination: {config["dest_printer"]}
     
     Press Ctrl+C to stop
     """)
 
     mirror = PrinterMirrorCore(
-        source_printer=config["source_printer"],
+        source_printers=config["source_printers"],
         dest_printer=config["dest_printer"],
         interval=config["interval"],
     )
@@ -396,35 +413,39 @@ def main():
         elif cmd == "uninstall" or cmd == "remove":
             uninstall_service()
         elif cmd == "start":
-            os.system(f"net start {SpoolerQueueCopyService._svc_name_}")
+            os.system(f"net start {SERVICE_NAME}")
         elif cmd == "stop":
-            os.system(f"net stop {SpoolerQueueCopyService._svc_name_}")
+            os.system(f"net stop {SERVICE_NAME}")
         elif cmd == "restart":
-            os.system(f"net stop {SpoolerQueueCopyService._svc_name_}")
+            os.system(f"net stop {SERVICE_NAME}")
             time.sleep(2)
-            os.system(f"net start {SpoolerQueueCopyService._svc_name_}")
+            os.system(f"net start {SERVICE_NAME}")
         elif cmd == "console":
             run_console()
         elif cmd == "config":
             if len(sys.argv) >= 4:
                 config = get_config()
-                config["source_printer"] = sys.argv[2]
+                # Support comma-separated source printers
+                sources = sys.argv[2].split(",")
+                config["source_printers"] = [s.strip() for s in sources]
                 config["dest_printer"] = sys.argv[3]
                 save_config(config)
                 print(f"Configuration updated:")
-                print(f"  Source:      {config['source_printer']}")
+                print(f"  Source(s):   {', '.join(config['source_printers'])}")
                 print(f"  Destination: {config['dest_printer']}")
             else:
-                print("Usage: mirror_service.py config <source> <destination>")
+                print(
+                    "Usage: mirror_service.py config <source1,source2,...> <destination>"
+                )
         elif cmd == "status":
             config = get_config()
-            print(f"Current configuration ({CONFIG_PATH}):")
-            print(f"  Source:      {config['source_printer']}")
+            print(f"Configuration ({CONFIG_PATH}):")
+            print(f"  Source(s):   {', '.join(config['source_printers'])}")
             print(f"  Destination: {config['dest_printer']}")
             print(f"  Interval:    {config['interval']}s")
         else:
             print(f"""
-Spooler Queue Copy - Mirror Service
+{APP_NAME} - Service Manager
 
 Usage: {sys.argv[0]} <command>
 
@@ -434,19 +455,22 @@ Commands:
   start       - Start the service
   stop        - Stop the service
   restart     - Restart the service
-  console     - Run in console mode (not as service)
-  config <source> <dest> - Configure printers
+  console     - Run in console mode (for testing)
+  config <sources> <dest> - Configure printers (sources comma-separated)
   status      - Show current configuration
+
+Examples:
+  {sys.argv[0]} config "PrinterOrg1,PrinterOrg2" "PrinterCopy"
+  {sys.argv[0]} install
+  {sys.argv[0]} start
             """)
     else:
-        # If run without arguments, try as service
         if SERVICE_AVAILABLE and len(sys.argv) == 1:
             try:
                 servicemanager.Initialize()
-                servicemanager.PrepareToHostSingle(SpoolerQueueCopyService)
+                servicemanager.PrepareToHostSingle(EmiliaPrintMirrorService)
                 servicemanager.StartServiceCtrlDispatcher()
             except Exception:
-                # If it fails, run in console mode
                 run_console()
         else:
             run_console()
