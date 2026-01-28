@@ -18,76 +18,20 @@ A Windows application to automatically mirror print jobs from one or more printe
 
 ## Installation
 
-### Option 1: Pre-built Executables (Recommended)
+### Option 1: Pre-built GUI (Recommended for Desktop)
 
-Download the pre-built executables from the `dist/` folder:
-
-| File | Description |
-|------|-------------|
-| `EmiliaPrintMirror.exe` | GUI application (35 MB) |
-| `EmiliaPrintMirrorService.exe` | Background service (7 MB) |
-
-#### Install as GUI Application
+Download `EmiliaPrintMirror.exe` from the [Releases](https://github.com/EmiliaVision/emilia-print-mirror/releases) page.
 
 1. Copy `EmiliaPrintMirror.exe` to your preferred location (e.g., `C:\Program Files\EmiliaPrintMirror\`)
 2. Create a desktop shortcut (optional)
 3. Right-click the shortcut > Properties > Advanced > **Run as administrator**
 4. Double-click to run
 
-#### Install as Windows Service (with NSSM)
-
-[NSSM](https://nssm.cc/) (Non-Sucking Service Manager) is recommended for running the service.
-
-```powershell
-# 1. Download NSSM from https://nssm.cc/download
-# 2. Extract and add to PATH, or use full path to nssm.exe
-
-# 3. Create configuration directory and file
-New-Item -ItemType Directory -Force -Path "C:\ProgramData\EmiliaPrintMirror"
-
-# 4. Create config.json with your printers
-@"
-{
-  "source_printers": ["YourSourcePrinter1", "YourSourcePrinter2"],
-  "dest_printer": "YourDestinationPrinter",
-  "interval": 1.0
-}
-"@ | Out-File -FilePath "C:\ProgramData\EmiliaPrintMirror\config.json" -Encoding UTF8
-
-# 5. Install the service with NSSM
-nssm install EmiliaPrintMirror "C:\Program Files\EmiliaPrintMirror\EmiliaPrintMirrorService.exe" console
-
-# 6. Configure service to run as SYSTEM (for spool access)
-nssm set EmiliaPrintMirror ObjectName LocalSystem
-
-# 7. Start the service
-nssm start EmiliaPrintMirror
-```
-
-**Service Management Commands:**
-
-```powershell
-# Check status
-nssm status EmiliaPrintMirror
-
-# View logs
-Get-Content "C:\ProgramData\EmiliaPrintMirror\service.log" -Tail 50
-
-# Restart service
-nssm restart EmiliaPrintMirror
-
-# Stop service
-nssm stop EmiliaPrintMirror
-
-# Remove service
-nssm remove EmiliaPrintMirror confirm
-```
-
 ### Option 2: Run from Source
 
 ```powershell
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/EmiliaVision/emilia-print-mirror.git
 cd emilia-print-mirror
 
 # Create virtual environment and install dependencies
@@ -105,12 +49,77 @@ python src/mirror_app.py
 # Install uv
 irm https://astral.sh/uv/install.ps1 | iex
 
-# Install dependencies and run
+# Clone and run
+git clone https://github.com/EmiliaVision/emilia-print-mirror.git
+cd emilia-print-mirror
 uv sync
 uv run python src/mirror_app.py
 ```
 
-### Option 4: Build Executables from Source
+### Option 4: Install as Windows Service (with NSSM)
+
+For running as a background service, use Python directly with [NSSM](https://nssm.cc/).
+
+```powershell
+# 1. Clone the repository
+git clone https://github.com/EmiliaVision/emilia-print-mirror.git
+cd emilia-print-mirror
+
+# 2. Create virtual environment
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+
+# 3. Download NSSM from https://nssm.cc/download and extract to C:\Tools\nssm\
+
+# 4. Create configuration directory and file
+New-Item -ItemType Directory -Force -Path "C:\ProgramData\EmiliaPrintMirror"
+
+# 5. Create config.json with your printers
+@"
+{
+  "source_printers": ["YourSourcePrinter1", "YourSourcePrinter2"],
+  "dest_printer": "YourDestinationPrinter",
+  "interval": 1.0
+}
+"@ | Out-File -FilePath "C:\ProgramData\EmiliaPrintMirror\config.json" -Encoding UTF8
+
+# 6. Install the service with NSSM (adjust paths as needed)
+$repoPath = "C:\Users\$env:USERNAME\emilia-print-mirror"
+nssm install EmiliaPrintMirror "$repoPath\venv\Scripts\python.exe" "$repoPath\src\mirror_service.py console"
+
+# 7. Configure NSSM logging
+nssm set EmiliaPrintMirror AppStdout "C:\ProgramData\EmiliaPrintMirror\service_stdout.log"
+nssm set EmiliaPrintMirror AppStderr "C:\ProgramData\EmiliaPrintMirror\service_stderr.log"
+
+# 8. Configure service to run as SYSTEM (for spool access)
+nssm set EmiliaPrintMirror ObjectName LocalSystem
+
+# 9. Start the service
+nssm start EmiliaPrintMirror
+```
+
+**Service Management Commands:**
+
+```powershell
+# Check status
+nssm status EmiliaPrintMirror
+Get-Service EmiliaPrintMirror
+
+# View logs
+Get-Content "C:\ProgramData\EmiliaPrintMirror\service_stderr.log" -Tail 50
+
+# Restart service
+nssm restart EmiliaPrintMirror
+
+# Stop service
+nssm stop EmiliaPrintMirror
+
+# Remove service
+nssm remove EmiliaPrintMirror confirm
+```
+
+### Option 5: Build GUI Executable from Source
 
 ```powershell
 # Install dependencies
@@ -119,10 +128,6 @@ pip install -r requirements.txt
 # Build GUI application
 pyinstaller build_mirror.spec
 # Output: dist/EmiliaPrintMirror.exe
-
-# Build Service executable
-pyinstaller --onefile --noconsole --name EmiliaPrintMirrorService src/mirror_service.py
-# Output: dist/EmiliaPrintMirrorService.exe
 ```
 
 ## Usage
@@ -228,10 +233,10 @@ Set-Printer -Name "EmiliaPrinterOrg" -KeepPrintedJobs $true
 2. Try increasing the interval between checks
 
 ### Service won't start
-1. Check log file at `C:\ProgramData\EmiliaPrintMirror\service.log`
+1. Check log file at `C:\ProgramData\EmiliaPrintMirror\service_stderr.log`
 2. Run in console mode to see errors:
    ```powershell
-   EmiliaPrintMirrorService.exe console
+   python src/mirror_service.py console
    ```
 3. Verify config.json exists and has valid JSON
 
