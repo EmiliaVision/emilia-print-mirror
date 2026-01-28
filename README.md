@@ -13,12 +13,77 @@ A Windows application to automatically mirror print jobs from one or more printe
 ## Requirements
 
 - Windows 10 or Windows 11
-- Python 3.9+ (for development)
-- Administrator privileges (recommended for spool file access)
+- Administrator privileges (required for spool file access)
+- Python 3.9+ (only for development)
 
-## Quick Start
+## Installation
 
-### Option 1: Run from Source
+### Option 1: Pre-built Executables (Recommended)
+
+Download the pre-built executables from the `dist/` folder:
+
+| File | Description |
+|------|-------------|
+| `EmiliaPrintMirror.exe` | GUI application (35 MB) |
+| `EmiliaPrintMirrorService.exe` | Background service (7 MB) |
+
+#### Install as GUI Application
+
+1. Copy `EmiliaPrintMirror.exe` to your preferred location (e.g., `C:\Program Files\EmiliaPrintMirror\`)
+2. Create a desktop shortcut (optional)
+3. Right-click the shortcut > Properties > Advanced > **Run as administrator**
+4. Double-click to run
+
+#### Install as Windows Service (with NSSM)
+
+[NSSM](https://nssm.cc/) (Non-Sucking Service Manager) is recommended for running the service.
+
+```powershell
+# 1. Download NSSM from https://nssm.cc/download
+# 2. Extract and add to PATH, or use full path to nssm.exe
+
+# 3. Create configuration directory and file
+New-Item -ItemType Directory -Force -Path "C:\ProgramData\EmiliaPrintMirror"
+
+# 4. Create config.json with your printers
+@"
+{
+  "source_printers": ["YourSourcePrinter1", "YourSourcePrinter2"],
+  "dest_printer": "YourDestinationPrinter",
+  "interval": 1.0
+}
+"@ | Out-File -FilePath "C:\ProgramData\EmiliaPrintMirror\config.json" -Encoding UTF8
+
+# 5. Install the service with NSSM
+nssm install EmiliaPrintMirror "C:\Program Files\EmiliaPrintMirror\EmiliaPrintMirrorService.exe" console
+
+# 6. Configure service to run as SYSTEM (for spool access)
+nssm set EmiliaPrintMirror ObjectName LocalSystem
+
+# 7. Start the service
+nssm start EmiliaPrintMirror
+```
+
+**Service Management Commands:**
+
+```powershell
+# Check status
+nssm status EmiliaPrintMirror
+
+# View logs
+Get-Content "C:\ProgramData\EmiliaPrintMirror\service.log" -Tail 50
+
+# Restart service
+nssm restart EmiliaPrintMirror
+
+# Stop service
+nssm stop EmiliaPrintMirror
+
+# Remove service
+nssm remove EmiliaPrintMirror confirm
+```
+
+### Option 2: Run from Source
 
 ```powershell
 # Clone the repository
@@ -34,7 +99,7 @@ pip install -r requirements.txt
 python src/mirror_app.py
 ```
 
-### Option 2: Using uv (Recommended)
+### Option 3: Using uv
 
 ```powershell
 # Install uv
@@ -45,47 +110,45 @@ uv sync
 uv run python src/mirror_app.py
 ```
 
-### Option 3: Build Executable
+### Option 4: Build Executables from Source
 
 ```powershell
+# Install dependencies
 pip install -r requirements.txt
+
+# Build GUI application
 pyinstaller build_mirror.spec
-# Executable will be in dist/EmiliaPrintMirror.exe
+# Output: dist/EmiliaPrintMirror.exe
+
+# Build Service executable
+pyinstaller --onefile --noconsole --name EmiliaPrintMirrorService src/mirror_service.py
+# Output: dist/EmiliaPrintMirrorService.exe
 ```
 
 ## Usage
 
 ### GUI Application
 
-1. Run the application as Administrator
+1. Run `EmiliaPrintMirror.exe` as Administrator
 2. Select one or more **SOURCE** printers (Ctrl+click for multiple)
 3. Select the **DESTINATION** printer
 4. Click **Start Mirror**
 5. Print to any source printer - it will be automatically copied to the destination
+6. Minimize to system tray (optional)
 
-### Windows Service
+### Windows Service (Command Line)
+
+If running from source:
 
 ```powershell
 # Configure printers (run once)
 python src/mirror_service.py config "SourcePrinter1,SourcePrinter2" "DestinationPrinter"
 
-# Install as Windows service
-python src/mirror_service.py install
-
-# Start the service
-python src/mirror_service.py start
-
-# Check status
-python src/mirror_service.py status
-
-# Stop the service
-python src/mirror_service.py stop
-
-# Uninstall the service
-python src/mirror_service.py uninstall
-
 # Run in console mode (for testing)
 python src/mirror_service.py console
+
+# Check current configuration
+python src/mirror_service.py status
 ```
 
 ## Configuration
@@ -154,15 +217,28 @@ Set-Printer -Name "EmiliaPrinterOrg" -KeepPrintedJobs $true
 ## Troubleshooting
 
 ### "No access to spool directory"
-Run the application as Administrator.
+- Run the application as Administrator
+- If running as service, ensure it runs as `LocalSystem`
 
 ### "Could not read job"
-1. Ensure `KeepPrintedJobs` is enabled on source printer(s)
+1. Ensure `KeepPrintedJobs` is enabled on source printer(s):
+   ```powershell
+   Set-Printer -Name "YourSourcePrinter" -KeepPrintedJobs $true
+   ```
 2. Try increasing the interval between checks
 
 ### Service won't start
 1. Check log file at `C:\ProgramData\EmiliaPrintMirror\service.log`
-2. Run `python src/mirror_service.py console` to see errors
+2. Run in console mode to see errors:
+   ```powershell
+   EmiliaPrintMirrorService.exe console
+   ```
+3. Verify config.json exists and has valid JSON
+
+### GUI won't start
+1. Ensure you're running as Administrator
+2. Check if PyQt6 dependencies are available (if running from source)
+3. Try running from command line to see error messages
 
 ## Project Structure
 
