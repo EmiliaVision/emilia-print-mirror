@@ -895,38 +895,37 @@ class PrinterMirrorApp(QMainWindow):
                 shutil.copy2(service_exe, installed_exe)
                 self._log(f"Copied service exe to {installed_exe}")
 
-            # Install the service using sc.exe
-            cmd = [
-                "sc",
-                "create",
-                SERVICE_NAME,
-                f"binPath={installed_exe} service",
-                "start=auto",
-                f"DisplayName={SERVICE_DISPLAY_NAME}",
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            # Install the service using the exe's own install command
+            result = subprocess.run(
+                [str(installed_exe), "install"],
+                capture_output=True,
+                text=True,
+            )
 
-            if result.returncode == 0:
+            if (
+                result.returncode == 0
+                or "installed successfully" in (result.stdout + result.stderr).lower()
+            ):
                 self._log(f"Service '{SERVICE_NAME}' installed successfully")
 
-                # Set description
-                subprocess.run(
-                    [
-                        "sc",
-                        "description",
-                        SERVICE_NAME,
-                        "Automatically mirrors print jobs from source printers to destination printer",
-                    ],
+                # Start the service
+                start_result = subprocess.run(
+                    [str(installed_exe), "start"],
                     capture_output=True,
+                    text=True,
                 )
 
-                # Start the service
-                subprocess.run(["sc", "start", SERVICE_NAME], capture_output=True)
+                if start_result.returncode == 0:
+                    self._log("Service started successfully")
+                else:
+                    self._log(
+                        f"Service installed but failed to start: {start_result.stderr or start_result.stdout}"
+                    )
 
                 QMessageBox.information(
                     self,
                     "Success",
-                    f"Service installed and started!\n\n"
+                    f"Service installed!\n\n"
                     f"The service will run in the background and\n"
                     f"start automatically when Windows boots.",
                 )
@@ -954,23 +953,32 @@ class PrinterMirrorApp(QMainWindow):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
+        installed_exe = SERVICE_INSTALL_DIR / "EmiliaMirrorService.exe"
+
         try:
-            # Stop the service first
-            subprocess.run(["sc", "stop", SERVICE_NAME], capture_output=True)
+            if installed_exe.exists():
+                # Use the exe's own uninstall command
+                result = subprocess.run(
+                    [str(installed_exe), "uninstall"],
+                    capture_output=True,
+                    text=True,
+                )
+            else:
+                # Fallback to sc.exe
+                subprocess.run(["sc", "stop", SERVICE_NAME], capture_output=True)
+                import time
 
-            # Wait a moment for it to stop
-            import time
+                time.sleep(2)
+                result = subprocess.run(
+                    ["sc", "delete", SERVICE_NAME],
+                    capture_output=True,
+                    text=True,
+                )
 
-            time.sleep(2)
-
-            # Delete the service
-            result = subprocess.run(
-                ["sc", "delete", SERVICE_NAME],
-                capture_output=True,
-                text=True,
-            )
-
-            if result.returncode == 0:
+            if (
+                result.returncode == 0
+                or "success" in (result.stdout + result.stderr).lower()
+            ):
                 self._log(f"Service '{SERVICE_NAME}' uninstalled successfully")
                 QMessageBox.information(
                     self, "Success", "Service uninstalled successfully"
@@ -989,12 +997,20 @@ class PrinterMirrorApp(QMainWindow):
 
     def _start_service(self):
         """Start the Windows service."""
+        installed_exe = SERVICE_INSTALL_DIR / "EmiliaMirrorService.exe"
         try:
-            result = subprocess.run(
-                ["sc", "start", SERVICE_NAME],
-                capture_output=True,
-                text=True,
-            )
+            if installed_exe.exists():
+                result = subprocess.run(
+                    [str(installed_exe), "start"],
+                    capture_output=True,
+                    text=True,
+                )
+            else:
+                result = subprocess.run(
+                    ["net", "start", SERVICE_NAME],
+                    capture_output=True,
+                    text=True,
+                )
             if result.returncode == 0:
                 self._log("Service started")
             else:
@@ -1005,12 +1021,20 @@ class PrinterMirrorApp(QMainWindow):
 
     def _stop_service(self):
         """Stop the Windows service."""
+        installed_exe = SERVICE_INSTALL_DIR / "EmiliaMirrorService.exe"
         try:
-            result = subprocess.run(
-                ["sc", "stop", SERVICE_NAME],
-                capture_output=True,
-                text=True,
-            )
+            if installed_exe.exists():
+                result = subprocess.run(
+                    [str(installed_exe), "stop"],
+                    capture_output=True,
+                    text=True,
+                )
+            else:
+                result = subprocess.run(
+                    ["net", "stop", SERVICE_NAME],
+                    capture_output=True,
+                    text=True,
+                )
             if result.returncode == 0:
                 self._log("Service stopped")
             else:
