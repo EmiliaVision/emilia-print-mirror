@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="assets/banner.png" alt="Emilia Print Mirror Banner" width="100%">
+</div>
+
 # Emilia Print Mirror
 
 A Windows application to automatically mirror print jobs from one or more printers to a destination printer.
@@ -26,19 +30,9 @@ For a detailed visual guide, see **[Installation Guide](docs/INSTALL_GUIDE.md)**
 
 ## How It Works
 
-```
-┌─────────────────────┐
-│ Source Printer 1    │──┐
-└─────────────────────┘  │
-                         │    ┌─────────────────────┐
-┌─────────────────────┐  ├───▶│ Destination Printer │
-│ Source Printer 2    │──┤    └─────────────────────┘
-└─────────────────────┘  │
-                         │
-┌─────────────────────┐  │
-│ Source Printer N    │──┘
-└─────────────────────┘
-```
+<div align="center">
+  <img src="assets/how-it-works.png" alt="Emilia Print Mirror Flow" width="100%">
+</div>
 
 The service monitors the Windows print spooler. When a new job is detected on a source printer, it reads the spool file and sends the raw print data to the destination printer.
 
