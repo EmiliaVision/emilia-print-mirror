@@ -54,6 +54,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='assets/icon.ico',  # Will need to convert SVG to ICO
+    icon=None,  # No icon file (uses embedded SVG)
     uac_admin=True,
 )

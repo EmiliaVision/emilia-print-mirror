@@ -43,7 +43,22 @@ pip install -r requirements.txt
 python src/mirror_app.py
 ```
 
-### Option 3: Using uv
+### Option 3: Using uvx (Quick Run)
+
+Run directly without installation using [uv](https://docs.astral.sh/uv/):
+
+```powershell
+# Install uv
+irm https://astral.sh/uv/install.ps1 | iex
+
+# Run GUI directly from GitHub
+uvx --from git+https://github.com/EmiliaVision/emilia-print-mirror emilia-mirror
+
+# Run service/CLI mode
+uvx --from git+https://github.com/EmiliaVision/emilia-print-mirror emilia-mirror-service console
+```
+
+### Option 4: Using uv (Development)
 
 ```powershell
 # Install uv
@@ -53,10 +68,10 @@ irm https://astral.sh/uv/install.ps1 | iex
 git clone https://github.com/EmiliaVision/emilia-print-mirror.git
 cd emilia-print-mirror
 uv sync
-uv run python src/mirror_app.py
+uv run emilia-mirror
 ```
 
-### Option 4: Install as Windows Service (with NSSM)
+### Option 5: Install as Windows Service (with NSSM)
 
 For running as a background service, use Python directly with [NSSM](https://nssm.cc/).
 
@@ -119,7 +134,7 @@ nssm stop EmiliaPrintMirror
 nssm remove EmiliaPrintMirror confirm
 ```
 
-### Option 5: Build GUI Executable from Source
+### Option 6: Build GUI Executable from Source
 
 ```powershell
 # Install dependencies

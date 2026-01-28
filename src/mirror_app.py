@@ -8,10 +8,12 @@ Supports multiple source printers mirroring to one destination.
 import sys
 import os
 import time
+import json
 import logging
 import subprocess
 import base64
 from typing import Set, Optional, List, Dict
+from pathlib import Path
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -55,7 +57,32 @@ FLOWER_ICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 25
 </svg>"""
 
 APP_NAME = "Emilia Print Mirror"
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.2.0"
+
+# Configuration file path
+CONFIG_PATH = (
+    Path(os.environ.get("APPDATA", os.path.expanduser("~")))
+    / "EmiliaPrintMirror"
+    / "gui_config.json"
+)
+
+
+def load_config() -> dict:
+    """Load GUI configuration from file."""
+    if CONFIG_PATH.exists():
+        try:
+            with open(CONFIG_PATH, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def save_config(config: dict):
+    """Save GUI configuration to file."""
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(CONFIG_PATH, "w") as f:
+        json.dump(config, f, indent=2)
 
 
 def get_app_icon() -> QIcon:
@@ -271,9 +298,18 @@ class PrinterMirrorApp(QMainWindow):
         super().__init__()
         self.worker = None
         self.printers = []
+        self.config = load_config()
 
         self._setup_ui()
         self._load_printers()
+        self._apply_saved_config()
+
+        # Auto-start if configured
+        if self.config.get("auto_start", False):
+            # Use a timer to start after UI is ready
+            from PyQt6.QtCore import QTimer
+
+            QTimer.singleShot(500, self._auto_start_mirror)
 
     def _setup_ui(self):
         self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
@@ -359,6 +395,17 @@ class PrinterMirrorApp(QMainWindow):
         options_layout.addWidget(self.interval_spin)
 
         config_layout.addLayout(options_layout)
+
+        # Auto-start option
+        autostart_layout = QHBoxLayout()
+        self.auto_start_check = QCheckBox("Auto-start mirror when application opens")
+        self.auto_start_check.setToolTip(
+            "Automatically start mirroring when the application launches"
+        )
+        autostart_layout.addWidget(self.auto_start_check)
+        autostart_layout.addStretch()
+        config_layout.addLayout(autostart_layout)
+
         layout.addWidget(config_group)
 
         # === Buttons ===
@@ -474,6 +521,57 @@ class PrinterMirrorApp(QMainWindow):
         except Exception as e:
             self._log(f"Error loading printers: {e}")
 
+    def _apply_saved_config(self):
+        """Apply saved configuration to UI."""
+        if not self.config:
+            return
+
+        # Apply saved source printers
+        saved_sources = self.config.get("source_printers", [])
+        if saved_sources:
+            for i in range(self.source_list.count()):
+                item = self.source_list.item(i)
+                if item:
+                    item.setSelected(item.text() in saved_sources)
+
+        # Apply saved destination
+        saved_dest = self.config.get("dest_printer", "")
+        if saved_dest:
+            index = self.dest_combo.findText(saved_dest)
+            if index >= 0:
+                self.dest_combo.setCurrentIndex(index)
+
+        # Apply saved interval
+        saved_interval = self.config.get("interval", 1)
+        self.interval_spin.setValue(saved_interval)
+
+        # Apply auto-start setting
+        self.auto_start_check.setChecked(self.config.get("auto_start", False))
+
+        self._log("Loaded saved configuration")
+
+    def _save_current_config(self):
+        """Save current configuration to file."""
+        self.config = {
+            "source_printers": self._get_selected_sources(),
+            "dest_printer": self.dest_combo.currentText(),
+            "interval": self.interval_spin.value(),
+            "auto_start": self.auto_start_check.isChecked(),
+        }
+        save_config(self.config)
+        self._log("Configuration saved")
+
+    def _auto_start_mirror(self):
+        """Auto-start mirror if configured."""
+        sources = self._get_selected_sources()
+        dest = self.dest_combo.currentText()
+
+        if sources and dest and dest not in sources:
+            self._log("Auto-starting mirror...")
+            self._start_mirror()
+        else:
+            self._log("Auto-start skipped: invalid configuration")
+
     def _configure_printer(self, printer_name: str):
         """Configure printer to keep printed jobs."""
         try:
@@ -514,6 +612,9 @@ class PrinterMirrorApp(QMainWindow):
         if dest in sources:
             QMessageBox.warning(self, "Error", "Destination cannot be a source printer")
             return
+
+        # Save configuration when starting
+        self._save_current_config()
 
         if self.auto_config_check.isChecked():
             for source in sources:

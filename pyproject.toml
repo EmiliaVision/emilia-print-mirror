@@ -1,13 +1,42 @@
 [project]
-name = "spooler-queue-copy"
-version = "2.0.0"
+name = "emilia-print-mirror"
+version = "2.2.0"
 description = "Windows application to automatically mirror print jobs between printers"
 readme = "README.md"
 requires-python = ">=3.9"
+license = "MIT"
+authors = [
+    { name = "EmiliaVision", email = "info@emiliavision.com" }
+]
+keywords = ["printer", "mirror", "spooler", "windows", "print"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Printing",
+]
 dependencies = [
     "pywin32>=306",
     "PyQt6>=6.6.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/EmiliaVision/emilia-print-mirror"
+Repository = "https://github.com/EmiliaVision/emilia-print-mirror"
+Issues = "https://github.com/EmiliaVision/emilia-print-mirror/issues"
+
+[project.scripts]
+emilia-mirror-service = "src.mirror_service:main"
+
+[project.gui-scripts]
+emilia-mirror = "src.mirror_app:main"
 
 [project.optional-dependencies]
 dev = [
@@ -17,3 +46,6 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
