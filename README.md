@@ -141,6 +141,25 @@ pyinstaller build_mirror.spec
 5. Print to any source printer - it will be automatically copied to the destination
 6. Minimize to system tray (optional)
 
+#### Auto-start GUI on Windows Login
+
+To run the GUI automatically when you log in (as Administrator):
+
+```powershell
+# Create scheduled task that runs at login with admin privileges
+$Action = New-ScheduledTaskAction -Execute "C:\Program Files\EmiliaPrintMirror\EmiliaPrintMirror.exe"
+$Trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+$Principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -RunLevel Highest
+
+Register-ScheduledTask -TaskName "EmiliaPrintMirror" -Action $Action -Trigger $Trigger -Settings $Settings -Principal $Principal -Force
+```
+
+To remove the auto-start:
+```powershell
+Unregister-ScheduledTask -TaskName "EmiliaPrintMirror" -Confirm:$false
+```
+
 ### Windows Service (Command Line)
 
 If running from source:
