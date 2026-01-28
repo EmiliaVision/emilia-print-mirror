@@ -13,7 +13,8 @@ A Windows application to automatically mirror print jobs from one or more printe
 ## Requirements
 
 - Windows 10 or Windows 11
-- Python 3.9+ 
+- [Git for Windows](https://git-scm.com/download/win)
+- Python 3.9+ (uv installs it automatically)
 - Administrator privileges (required for spool file access)
 
 ## Installation
